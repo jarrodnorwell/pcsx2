@@ -13,6 +13,13 @@ target_compile_features(PCSX2_FLAGS INTERFACE cxx_std_17)
 target_compile_definitions(PCSX2_FLAGS INTERFACE "${PCSX2_DEFS}")
 target_compile_options(PCSX2_FLAGS INTERFACE "${PCSX2_WARNINGS}")
 
+if(IOS)
+	set(ARCH_ARM64 TRUE)
+	target_compile_definitions(PCSX2_FLAGS INTERFACE
+		"ARCH_ARM64"
+	)
+endif()
+
 # Check that people use the good file
 if(NOT TOP_CMAKE_WAS_SOURCED)
 	message(FATAL_ERROR "
@@ -902,10 +909,14 @@ set(pcsx2LinuxSources
 	CDVD/Linux/IOCtlSrc.cpp
 	)
 
-set(pcsx2OSXSources
-	CDVD/Darwin/DriveUtility.cpp
-	CDVD/Darwin/IOCtlSrc.cpp
+if(IOS)
+	set(pcsx2OSXSources)
+else()
+	set(pcsx2OSXSources
+		CDVD/Darwin/DriveUtility.cpp
+		CDVD/Darwin/IOCtlSrc.cpp
 	)
+endif()
 
 set(pcsx2FreeBSDSources
 	CDVD/Darwin/DriveUtility.cpp
@@ -913,8 +924,7 @@ set(pcsx2FreeBSDSources
 	)
 
 # Linux headers
-set(pcsx2LinuxHeaders
-	)
+set(pcsx2LinuxHeaders)
 
 # ps2 sources
 set(pcsx2ps2Sources
@@ -1054,7 +1064,7 @@ set(pcsx2arm64Sources
 	arm64/Vif_Dynarec.cpp
 	arm64/Vif_UnpackNEON.cpp
 	arm64/RecStubs.cpp
-	)
+)
 
 set(pcsx2arm64Headers
 	arm64/AsmHelpers.h
@@ -1155,11 +1165,9 @@ target_link_libraries(PCSX2_FLAGS INTERFACE
 	cpuinfo
 	cubeb
 	rcheevos
-	discord-rpc
 	simpleini
 	freesurround
 	Freetype::Freetype
-	SDL3::SDL3
 	ZLIB::ZLIB
 	LZ4::LZ4
 	SoundTouch::SoundTouch
@@ -1172,6 +1180,17 @@ target_link_libraries(PCSX2_FLAGS INTERFACE
 	plutosvg::plutosvg
 	${LIBC_LIBRARIES}
 )
+
+if(IOS)
+target_link_libraries(PCSX2_FLAGS INTERFACE
+	SDL3::SDL3-static
+)
+else()
+target_link_libraries(PCSX2_FLAGS INTERFACE
+	discord-rpc
+	SDL3::SDL3
+)
+endif()
 
 if(WIN32)
 	target_link_libraries(PCSX2_FLAGS INTERFACE
@@ -1196,7 +1215,7 @@ if(WIN32)
 		dwmapi.lib
 		OneCore.lib
 	)
-else()
+elseif(NOT IOS)
 	target_link_libraries(PCSX2_FLAGS INTERFACE
 		PCAP::PCAP
 	)
@@ -1248,20 +1267,34 @@ fixup_file_properties(PCSX2)
 force_include_last(PCSX2_FLAGS "/(usr|local)/include/?$")
 
 if (APPLE)
-	find_library(APPKIT_LIBRARY AppKit)
-	find_library(IOKIT_LIBRARY IOKit)
-	find_library(METAL_LIBRARY Metal)
-	find_library(QUARTZCORE_LIBRARY QuartzCore)
-	find_library(AVFOUNDATION_LIBRARY AVFoundation)
-	find_library(COREMEDIA_LIBRARY CoreMedia)
-	target_link_libraries(PCSX2_FLAGS INTERFACE
-		${APPKIT_LIBRARY}
-		${IOKIT_LIBRARY}
-		${METAL_LIBRARY}
-		${QUARTZCORE_LIBRARY}
-		${AVFOUNDATION_LIBRARY}
-		${COREMEDIA_LIBRARY}
-	)
+	if(IOS)
+		target_link_libraries(PCSX2_FLAGS INTERFACE
+			"-framework UIKit"
+			"-framework GameController"
+			"-framework CoreHaptics"
+			"-framework AudioToolbox"
+			"-framework AVFoundation"
+			"-framework CoreAudio"
+			"-framework CoreMedia"
+			"-framework Metal"
+			"-framework QuartzCore"
+		)
+	else()
+		find_library(APPKIT_LIBRARY AppKit)
+		find_library(IOKIT_LIBRARY IOKit)
+		find_library(METAL_LIBRARY Metal)
+		find_library(QUARTZCORE_LIBRARY QuartzCore)
+		find_library(AVFOUNDATION_LIBRARY AVFoundation)
+		find_library(COREMEDIA_LIBRARY CoreMedia)
+		target_link_libraries(PCSX2_FLAGS INTERFACE
+			${APPKIT_LIBRARY}
+			${IOKIT_LIBRARY}
+			${METAL_LIBRARY}
+			${QUARTZCORE_LIBRARY}
+			${AVFOUNDATION_LIBRARY}
+			${COREMEDIA_LIBRARY}
+		)
+	endif()
 endif()
 
 set_property(GLOBAL PROPERTY PCSX2_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})

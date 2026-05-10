@@ -357,8 +357,8 @@ bool GSopen(const Pcsx2Config::GSOptions& config, GSRendererType renderer, u8* b
 	{
 		Host::ReportErrorAsync("Error",
 			fmt::format(TRANSLATE_FS("GS", "Failed to create render device. This may be due to your GPU not supporting the "
-			                               "chosen renderer ({}), or because your graphics drivers need to be updated."),
-			            Pcsx2Config::GSOptions::GetRendererName(GSConfig.Renderer)));
+										   "chosen renderer ({}), or because your graphics drivers need to be updated."),
+				Pcsx2Config::GSOptions::GetRendererName(GSConfig.Renderer)));
 		return false;
 	}
 
@@ -729,8 +729,8 @@ void GSgetMemoryStats(SmallStringBase& info)
 
 	const auto format_precision = [](const double megabytes) -> std::string {
 		return (megabytes < 10.0 ?
-			fmt::format("{:.1f}", megabytes) :
-			fmt::format("{:.0f}", std::round(megabytes)));
+					fmt::format("{:.1f}", megabytes) :
+					fmt::format("{:.0f}", std::round(megabytes)));
 	};
 
 	const double targets_MB = get_MB(static_cast<double>(g_texture_cache->GetTargetMemoryUsage()));
@@ -876,7 +876,7 @@ void GSSetSoftwareRendering(bool software_renderer, GSInterlaceMode new_interlac
 	{
 		// Config might be SW, and we're switching to HW -> use Auto.
 		const GSRendererType renderer = (software_renderer ? GSRendererType::SW :
-			(GSConfig.Renderer == GSRendererType::SW ? GSRendererType::Auto : GSConfig.Renderer));
+															 (GSConfig.Renderer == GSRendererType::SW ? GSRendererType::Auto : GSConfig.Renderer));
 		if (!GSreopen(false, true, renderer, std::nullopt))
 			pxFailRel("Failed to reopen GS for renderer switch.");
 	}
@@ -957,6 +957,66 @@ void GSFreeWrappedMemory(void* ptr, size_t size, size_t repeat)
 
 	VirtualFreeEx(GetCurrentProcess(), ptr, 0, MEM_RELEASE);
 	s_fh = NULL;
+}
+
+#elif TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+static int s_shm_fd = -1;
+void* GSAllocateWrappedMemory(size_t size, size_t repeat)
+{
+	pxAssert(s_shm_fd == -1);
+
+	const char* tmpdir = getenv("TMPDIR");
+	if (!tmpdir)
+		tmpdir = "/var/mobile/Containers/Data/Application";
+	char tmppath[1024];
+	snprintf(tmppath, sizeof(tmppath), "%s/GS.mem.XXXXXX", tmpdir);
+	s_shm_fd = mkstemp(tmppath);
+	if (s_shm_fd != -1)
+	{
+		unlink(tmppath); // unlink immediately, fd keeps file alive
+	}
+	else
+	{
+		fprintf(stderr, "Failed to create GS temp file: %s\n", strerror(errno));
+		return nullptr;
+	}
+
+	if (ftruncate(s_shm_fd, repeat * size) < 0)
+		fprintf(stderr, "Failed to reserve GS memory: %s\n", strerror(errno));
+
+	void* fifo = mmap(nullptr, size * repeat, PROT_READ | PROT_WRITE, MAP_SHARED, s_shm_fd, 0);
+
+	for (size_t i = 1; i < repeat; i++)
+	{
+		void* base = (u8*)fifo + size * i;
+		u8* next = (u8*)mmap(base, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, s_shm_fd, 0);
+		if (next != base)
+			Console.Error("@@GS_MMAP_FAIL@@ i=%zu base=%p next=%p errno=%d (%s)",
+				i, base, (void*)next, errno, strerror(errno));
+		else
+			Console.WriteLn("@@GS_MMAP_OK@@ i=%zu base=%p", i, base);
+	}
+
+	return fifo;
+}
+
+void GSFreeWrappedMemory(void* ptr, size_t size, size_t repeat)
+{
+	pxAssert(s_shm_fd >= 0);
+
+	if (s_shm_fd < 0)
+		return;
+
+	munmap(ptr, size * repeat);
+
+	close(s_shm_fd);
+	s_shm_fd = -1;
 }
 
 #else
@@ -1097,14 +1157,14 @@ static void HotkeyAdjustUpscaleMultiplier(const float delta)
 	if (GSCurrentRenderer == GSRendererType::SW || GSCurrentRenderer == GSRendererType::Null)
 	{
 		Host::AddIconOSDMessage("UpscaleMultiplierChanged", ICON_FA_ARROW_UP_RIGHT_FROM_SQUARE,
-								TRANSLATE_STR("GS", "Upscaling can only be changed while using the Hardware Renderer."), Host::OSD_QUICK_DURATION);
+			TRANSLATE_STR("GS", "Upscaling can only be changed while using the Hardware Renderer."), Host::OSD_QUICK_DURATION);
 		return;
 	}
 
 	// Clamp logic mirrors GraphicsSettingsWidget::populateUpscaleMultipliers().
 	float candidate_multiplier = EmuConfig.GS.UpscaleMultiplier + delta;
 	const float max_multiplier = static_cast<float>(std::clamp(GSGetMaxUpscaleMultiplier(g_gs_device->GetMaxTextureSize()),
-													10u, EmuConfig.GS.ExtendedUpscalingMultipliers ? 25u : 12u));
+		10u, EmuConfig.GS.ExtendedUpscalingMultipliers ? 25u : 12u));
 
 	std::string osd_message;
 	if (candidate_multiplier <= 1)
@@ -1120,7 +1180,7 @@ static void HotkeyAdjustUpscaleMultiplier(const float delta)
 	else
 	{
 		osd_message = fmt::format(TRANSLATE_FS("GS", "Upscale multiplier {} to {}x."),
-							  delta > 0 ? TRANSLATE_STR("GS", "increased") : TRANSLATE_STR("GS", "decreased"), candidate_multiplier);
+			delta > 0 ? TRANSLATE_STR("GS", "increased") : TRANSLATE_STR("GS", "decreased"), candidate_multiplier);
 	}
 
 	// Need to calculate our own target resolution. Reading after applying settings is a race condition.
@@ -1130,7 +1190,7 @@ static void HotkeyAdjustUpscaleMultiplier(const float delta)
 
 	//: Leftmost value is an OSD message about the upscale multiplier. Values in parentheses are a resolution width (left) and height (right).
 	Host::AddIconOSDMessage("UpscaleMultiplierChanged", ICON_FA_ARROW_UP_RIGHT_FROM_SQUARE,
-							fmt::format(TRANSLATE_FS("GS", "{} ({} x {})"), osd_message, target_iwidth, target_iheight), Host::OSD_QUICK_DURATION);
+		fmt::format(TRANSLATE_FS("GS", "{} ({} x {})"), osd_message, target_iwidth, target_iheight), Host::OSD_QUICK_DURATION);
 
 	// This is pretty slow. We only really need to flush the TC and recompile shaders.
 	// TODO(Stenzek): Make it faster at some point in the future.
@@ -1299,30 +1359,30 @@ BEGIN_HOTKEY_LIST(g_gs_hotkeys){"Screenshot", TRANSLATE_NOOP("Hotkeys", "Graphic
 			EmuConfig.GS.TVShader = new_shader;
 			MTGS::RunOnGSThread([new_shader]() { GSConfig.TVShader = new_shader; });
 		}},
-		{"CycleBlendingAccuracy", TRANSLATE_NOOP("Hotkeys", "Graphics"), TRANSLATE_NOOP("Hotkeys", "Cycle Blending Accuracy"),
-			[](s32 pressed) {
-				if (pressed)
-					return;
+	{"CycleBlendingAccuracy", TRANSLATE_NOOP("Hotkeys", "Graphics"), TRANSLATE_NOOP("Hotkeys", "Cycle Blending Accuracy"),
+		[](s32 pressed) {
+			if (pressed)
+				return;
 
-				static constexpr std::array<const char*, static_cast<u8>(AccBlendLevel::MaxCount)> s_blending_option_names = {{
-					TRANSLATE_NOOP("Hotkeys", "Minimum"),
-					TRANSLATE_NOOP("Hotkeys", "Basic"),
-					TRANSLATE_NOOP("Hotkeys", "Medium"),
-					TRANSLATE_NOOP("Hotkeys", "High"),
-					TRANSLATE_NOOP("Hotkeys", "Full"),
-					TRANSLATE_NOOP("Hotkeys", "Maximum"),
-				}};
+			static constexpr std::array<const char*, static_cast<u8>(AccBlendLevel::MaxCount)> s_blending_option_names = {{
+				TRANSLATE_NOOP("Hotkeys", "Minimum"),
+				TRANSLATE_NOOP("Hotkeys", "Basic"),
+				TRANSLATE_NOOP("Hotkeys", "Medium"),
+				TRANSLATE_NOOP("Hotkeys", "High"),
+				TRANSLATE_NOOP("Hotkeys", "Full"),
+				TRANSLATE_NOOP("Hotkeys", "Maximum"),
+			}};
 
-				const AccBlendLevel new_blend_mode = static_cast<AccBlendLevel>(
-					(static_cast<u8>(EmuConfig.GS.AccurateBlendingUnit) + 1) % static_cast<u8>(AccBlendLevel::MaxCount));
-				Host::AddKeyedOSDMessage("CycleBlendingAccuracy",
-					fmt::format(
-						TRANSLATE_FS("Hotkeys", "Blending Accuracy set to {}."), s_blending_option_names[static_cast<u8>(new_blend_mode)]),
-					Host::OSD_QUICK_DURATION);
+			const AccBlendLevel new_blend_mode = static_cast<AccBlendLevel>(
+				(static_cast<u8>(EmuConfig.GS.AccurateBlendingUnit) + 1) % static_cast<u8>(AccBlendLevel::MaxCount));
+			Host::AddKeyedOSDMessage("CycleBlendingAccuracy",
+				fmt::format(
+					TRANSLATE_FS("Hotkeys", "Blending Accuracy set to {}."), s_blending_option_names[static_cast<u8>(new_blend_mode)]),
+				Host::OSD_QUICK_DURATION);
 
-				EmuConfig.GS.AccurateBlendingUnit = new_blend_mode;
-				MTGS::RunOnGSThread([new_blend_mode]() { GSConfig.AccurateBlendingUnit = new_blend_mode; });
-			}},
+			EmuConfig.GS.AccurateBlendingUnit = new_blend_mode;
+			MTGS::RunOnGSThread([new_blend_mode]() { GSConfig.AccurateBlendingUnit = new_blend_mode; });
+		}},
 	{"ToggleTextureDumping", TRANSLATE_NOOP("Hotkeys", "Graphics"), TRANSLATE_NOOP("Hotkeys", "Toggle Texture Dumping"),
 		[](s32 pressed) {
 			if (!pressed)

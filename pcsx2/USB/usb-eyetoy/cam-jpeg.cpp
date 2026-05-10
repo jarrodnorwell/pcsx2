@@ -5,10 +5,13 @@
 
 #include "common/Console.h"
 
+#if !TARGET_OS_IPHONE
 #include <jpeglib.h>
+#endif
 
 #include <csetjmp>
 
+#if !TARGET_OS_IPHONE
 namespace
 {
 	struct JPEGErrorHandler
@@ -32,12 +35,13 @@ static bool HandleJPEGError(JPEGErrorHandler* eh)
 
 	if (setjmp(eh->jbuf) == 0)
 		return true;
-
 	return false;
 }
+#endif
 
 bool CompressCamJPEG(std::vector<u8>* buffer, const u8* image, u32 width, u32 height, int quality)
 {
+#if !TARGET_OS_IPHONE
 	struct MemCallback
 	{
 		jpeg_destination_mgr mgr;
@@ -110,10 +114,14 @@ bool CompressCamJPEG(std::vector<u8>* buffer, const u8* image, u32 width, u32 he
 	jpeg_finish_compress(&info);
 	jpeg_destroy_compress(&info);
 	return result;
+#else
+    return false;
+#endif
 }
 
 bool DecompressCamJPEG(std::vector<u8>* buffer, u32* width, u32* height, const u8* data, size_t data_size)
 {
+#if !TARGET_OS_IPHONE
 	JPEGErrorHandler err;
 	if (!HandleJPEGError(&err))
 		return false;
@@ -162,4 +170,7 @@ bool DecompressCamJPEG(std::vector<u8>* buffer, u32* width, u32* height, const u
 	jpeg_finish_decompress(&info);
 	jpeg_destroy_decompress(&info);
 	return result;
+#else
+    return false;
+#endif
 }

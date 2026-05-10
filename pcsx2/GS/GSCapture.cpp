@@ -34,6 +34,8 @@
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
+#if !TARGET_OS_IPHONE
+
 extern "C" {
 #include "libavcodec/avcodec.h"
 #include "libavcodec/version.h"
@@ -510,7 +512,7 @@ bool GSCapture::BeginCapture(float fps, GSVector2i recommendedResolution, float 
 			if (AVDictionaryEntry* dev = wrap_av_dict_get(s_video_codec_arguments, "hwaccel_device", nullptr, 0))
 				device = dev->value;
 			Console.WriteLnFmt(Color_StrongGreen, "Trying to use {}:{} for video encoding.",
-			                   wrap_av_hwdevice_get_type_name(hwconfig->device_type), device ? device : "default");
+				wrap_av_hwdevice_get_type_name(hwconfig->device_type), device ? device : "default");
 			res = wrap_av_hwdevice_ctx_create(&s_video_hw_context, hwconfig->device_type, device, nullptr, 0);
 			if (res < 0)
 			{
@@ -1546,3 +1548,33 @@ GSCapture::FormatList GSCapture::GetVideoFormatList(const char* codec)
 
 	return ret;
 }
+
+#else
+
+namespace GSCapture
+{
+	bool BeginCapture(float fps, GSVector2i recommendedResolution, float aspect, std::string filename) { return false; }
+	bool DeliverVideoFrame(GSTexture* stex) { return false; }
+	void DeliverAudioPacket(const float* frames) {}
+	void EndCapture() {}
+
+	bool IsCapturing() { return false; }
+	bool IsCapturingVideo() { return false; }
+	bool IsCapturingAudio() { return false; }
+	TinyString GetElapsedTime() { return "00:00:00"; }
+	const Threading::ThreadHandle& GetEncoderThreadHandle()
+	{
+		static Threading::ThreadHandle h;
+		return h;
+	}
+	GSVector2i GetSize() { return {0, 0}; }
+	std::string GetNextCaptureFileName() { return ""; }
+	void Flush() {}
+
+	CodecList GetVideoCodecList(const char* container) { return {}; }
+	CodecList GetAudioCodecList(const char* container) { return {}; }
+
+	FormatList GetVideoFormatList(const char* codec) { return {}; }
+} // namespace GSCapture
+
+#endif

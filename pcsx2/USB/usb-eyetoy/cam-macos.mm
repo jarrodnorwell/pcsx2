@@ -212,10 +212,17 @@ namespace usb_eyetoy
 
 			@autoreleasepool
 			{
-				AVCaptureDeviceDiscoverySession* discoverySession = [AVCaptureDeviceDiscoverySession
-					discoverySessionWithDeviceTypes:@[ AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureDeviceTypeExternalUnknown ]
-					                      mediaType:AVMediaTypeVideo
-					                       position:AVCaptureDevicePositionUnspecified];
+#if !TARGET_OS_IPHONE
+                AVCaptureDeviceDiscoverySession* discoverySession = [AVCaptureDeviceDiscoverySession
+                    discoverySessionWithDeviceTypes:@[ AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureDeviceTypeExternalUnknown ]
+                                          mediaType:AVMediaTypeVideo
+                                           position:AVCaptureDevicePositionUnspecified];
+#else
+                AVCaptureDeviceDiscoverySession* discoverySession = [AVCaptureDeviceDiscoverySession
+                    discoverySessionWithDeviceTypes:@[ AVCaptureDeviceTypeBuiltInWideAngleCamera ]
+                                          mediaType:AVMediaTypeVideo
+                                           position:AVCaptureDevicePositionUnspecified];
+#endif
 				NSArray<AVCaptureDevice*>* devices = discoverySession.devices;
 				if (devices.count == 0)
 					Console.Warning("Camera: You have no video capture hardware");

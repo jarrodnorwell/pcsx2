@@ -58,7 +58,9 @@
 #include "IconsFontAwesome.h"
 #include "IconsPromptFont.h"
 #include "cpuinfo.h"
+#if !TARGET_OS_IPHONE
 #include "discord_rpc.h"
+#endif
 #include "fmt/format.h"
 
 #include <atomic>
@@ -490,7 +492,7 @@ void VMManager::UpdateLoggingSettings(SettingsInterface& si)
 	if (system_console_enabled != Log::IsConsoleOutputEnabled())
 		Log::SetConsoleOutputLevel(system_console_enabled ? level : LOGLEVEL_NONE);
 
-		// Debug console only exists on Windows.
+	// Debug console only exists on Windows.
 #ifdef _WIN32
 	const bool debug_console_enabled = IsDebuggerPresent() && si.GetBoolValue("Logging", "EnableDebugConsole", false);
 	Log::SetDebugOutputLevel(debug_console_enabled ? level : LOGLEVEL_NONE);
@@ -521,8 +523,10 @@ void VMManager::UpdateLoggingSettings(SettingsInterface& si)
 	// Set the output level if file logging or trace logs have changed.
 	if (file_logging_enabled != Log::IsFileOutputEnabled() || (EmuConfig.Trace.Enabled && Log::GetMaxLevel() < LOGLEVEL_TRACE))
 	{
+#if !TARGET_OS_IPHONE
 		std::string path = Path::Combine(EmuFolders::Logs, "emulog.txt");
 		Log::SetFileOutputLevel(file_logging_enabled ? EmuConfig.Trace.Enabled ? LOGLEVEL_TRACE : level : LOGLEVEL_NONE, std::move(path));
+#endif
 	}
 }
 
@@ -2774,7 +2778,13 @@ void VMManager::IdlePollUpdate()
 
 	PollDiscordPresence();
 
+#if TARGET_OS_IPHONE
+	std::thread([]() {
+		InputManager::PollSources();
+	}).detach();
+#else
 	InputManager::PollSources();
+#endif
 }
 
 void VMManager::SetPaused(bool paused)
@@ -2932,7 +2942,13 @@ void VMManager::Internal::VSyncOnCPUThread()
 void VMManager::Internal::PollInputOnCPUThread()
 {
 	Host::PumpMessagesOnCPUThread();
+#if TARGET_OS_IPHONE
+	std::thread([]() {
+		InputManager::PollSources();
+	}).detach();
+#else
 	InputManager::PollSources();
+#endif
 
 	if (EmuConfig.EnableRecordingTools)
 	{
@@ -3769,6 +3785,7 @@ void VMManager::ReloadPINE()
 
 void VMManager::InitializeDiscordPresence()
 {
+#if !TARGET_OS_IPHONE
 	if (s_discord_presence_active)
 		return;
 
@@ -3777,10 +3794,12 @@ void VMManager::InitializeDiscordPresence()
 	s_discord_presence_active = true;
 
 	UpdateDiscordPresence(true);
+#endif
 }
 
 void VMManager::ShutdownDiscordPresence()
 {
+#if !TARGET_OS_IPHONE
 	if (!s_discord_presence_active)
 		return;
 
@@ -3788,10 +3807,13 @@ void VMManager::ShutdownDiscordPresence()
 	Discord_RunCallbacks();
 	Discord_Shutdown();
 	s_discord_presence_active = false;
+#endif
 }
 
 void VMManager::UpdateDiscordPresence(bool update_session_time)
 {
+
+#if !TARGET_OS_IPHONE
 	if (!s_discord_presence_active)
 		return;
 
@@ -3832,19 +3854,23 @@ void VMManager::UpdateDiscordPresence(bool update_session_time)
 
 	Discord_UpdatePresence(&rp);
 	Discord_RunCallbacks();
+#endif
 }
 
 void VMManager::PollDiscordPresence()
 {
+
+#if !TARGET_OS_IPHONE
 	if (!s_discord_presence_active)
 		return;
 
 	Discord_RunCallbacks();
+#endif
 }
 
 bool VMManager::WriteBytesToEESIORXFIFO(const std::span<const u8> data)
 {
-	if(ee_sio_rx_fifo.size() + data.size() > 1024)
+	if (ee_sio_rx_fifo.size() + data.size() > 1024)
 	{
 		Console.Warning("EE RX FIFO is full, not appending more bytes.");
 		return false;

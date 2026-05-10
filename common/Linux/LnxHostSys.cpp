@@ -19,6 +19,59 @@
 #include <ucontext.h>
 #endif
 
+#if TARGET_OS_IPHONE
+#include <libkern/OSCacheControl.h>
+#include <mach/mach_init.h>
+
+extern "C" {
+kern_return_t mach_vm_map(
+	vm_map_t target_task,
+	mach_vm_address_t* address,
+	mach_vm_size_t size,
+	mach_vm_offset_t mask,
+	int flags,
+	mem_entry_name_port_t object,
+	memory_object_offset_t offset,
+	boolean_t copy,
+	vm_prot_t cur_protection,
+	vm_prot_t max_protection,
+	vm_inherit_t inheritance);
+
+kern_return_t mach_vm_deallocate(
+	vm_map_t target,
+	mach_vm_address_t address,
+	mach_vm_size_t size);
+
+kern_return_t mach_vm_protect(
+	vm_map_t target_task,
+	mach_vm_address_t address,
+	mach_vm_size_t size,
+	boolean_t set_maximum,
+	vm_prot_t new_protection);
+
+kern_return_t mach_make_memory_entry_64(
+	vm_map_t target_task,
+	mach_vm_size_t* size,
+	mach_vm_offset_t offset,
+	vm_prot_t permission,
+	mach_port_t* object_handle,
+	mem_entry_name_port_t parent_entry);
+
+kern_return_t mach_vm_remap(
+	vm_map_t target_task,
+	mach_vm_address_t* target_address,
+	mach_vm_size_t size,
+	mach_vm_offset_t mask,
+	int flags,
+	vm_map_t src_task,
+	mach_vm_address_t src_address,
+	boolean_t copy,
+	vm_prot_t* cur_protection,
+	vm_prot_t* max_protection,
+	vm_inherit_t inheritance);
+}
+#endif
+
 #include "fmt/format.h"
 
 #if defined(__FreeBSD__)
@@ -43,11 +96,50 @@ void HostSys::MemProtect(void* baseaddr, size_t size, const PageProtectionMode& 
 {
 	pxAssertMsg((size & (__pagesize - 1)) == 0, "Size is page aligned");
 
+#if !TARGET_OS_IPHONE
 	const u32 lnxmode = LinuxProt(mode);
 
 	const int result = mprotect(baseaddr, size, lnxmode);
 	if (result != 0)
 		pxFail("mprotect() failed");
+#else
+#if TARGET_OS_SIMULATOR
+	kern_return_t res = mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(baseaddr), size,
+		false, LinuxProt(mode));
+	if (res != KERN_SUCCESS) [[unlikely]]
+	{
+		ERROR_LOG("mach_vm_protect() failed: {}", res);
+		pxFailRel("mach_vm_protect() failed");
+	}
+#else
+	int prot = 0;
+	if (mode.CanRead())
+		prot |= PROT_READ;
+	if (mode.CanWrite())
+		prot |= PROT_WRITE;
+	if (mode.CanExecute())
+		prot |= PROT_EXEC;
+	int ret = mprotect(baseaddr, size, prot);
+
+	{
+		uptr addr_val = (uptr)baseaddr;
+		if (prot == (PROT_READ | PROT_WRITE) && addr_val >= 0x300000000ULL && addr_val <= 0x3ffffffffULL)
+		{
+			static u32 s_rw_n = 0;
+			if (s_rw_n < 8)
+			{
+				int saved_errno = (ret != 0) ? errno : 0;
+				char buf[192];
+				int nn = snprintf(buf, sizeof(buf),
+					"@@MPROTECT_RW@@ n=%u addr=%p prot=%d ret=%d err=%d\n",
+					s_rw_n, baseaddr, prot, ret, saved_errno);
+				write(STDERR_FILENO, buf, nn);
+				s_rw_n++;
+			}
+		}
+	}
+#endif
+#endif
 }
 
 std::string HostSys::GetFileMappingName(const char* prefix)
@@ -61,8 +153,28 @@ std::string HostSys::GetFileMappingName(const char* prefix)
 #endif
 }
 
+#if TARGET_OS_IPHONE
+int s_shm_fd = -1;
+mach_vm_size_t vm_size = 0;
+#endif
 void* HostSys::CreateSharedMemory(const char* name, size_t size)
 {
+#if TARGET_OS_IPHONE
+#if TARGET_OS_SIMULATOR
+	vm_size = size;
+	mach_port_t port;
+	const kern_return_t res = mach_make_memory_entry_64(mach_task_self(), &vm_size, 0,
+		MAP_MEM_NAMED_CREATE | VM_PROT_READ | VM_PROT_WRITE, &port, MACH_PORT_NULL);
+	if (res != KERN_SUCCESS)
+	{
+		ERROR_LOG("mach_make_memory_entry_64() failed: {}", res);
+		return nullptr;
+	}
+
+	return reinterpret_cast<void*>(static_cast<uintptr_t>(port));
+#endif
+	return (void*)0xDEADBEEF;
+#else
 	const int fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
 	if (fd < 0)
 	{
@@ -81,11 +193,16 @@ void* HostSys::CreateSharedMemory(const char* name, size_t size)
 	}
 
 	return reinterpret_cast<void*>(static_cast<intptr_t>(fd));
+#endif
 }
 
 void HostSys::DestroySharedMemory(void* ptr)
 {
+#if TARGET_OS_SIMULATOR
+	mach_vm_deallocate(mach_task_self(), static_cast<mach_port_t>(reinterpret_cast<uintptr_t>(ptr)), vm_size);
+#else
 	close(static_cast<int>(reinterpret_cast<intptr_t>(ptr)));
+#endif
 }
 
 #ifndef __APPLE__
@@ -157,6 +274,20 @@ std::unique_ptr<SharedMemoryMappingArea> SharedMemoryMappingArea::Create(size_t 
 {
 	pxAssertRel(Common::IsAlignedPow2(size, __pagesize), "Size is page aligned");
 
+#if TARGET_OS_SIMULATOR
+	mach_vm_address_t alloc = 0;
+	// Use VM_PROT_DEFAULT (Read/Write) to ensure memory is accessible immediately
+	const kern_return_t res =
+		mach_vm_map(mach_task_self(), &alloc, size, 0, VM_FLAGS_ANYWHERE,
+			MEMORY_OBJECT_NULL, 0, false, VM_PROT_DEFAULT, VM_PROT_DEFAULT, VM_INHERIT_NONE);
+	if (res != KERN_SUCCESS)
+	{
+		ERROR_LOG("mach_vm_map() failed: {}", res);
+		return {};
+	}
+
+	return std::unique_ptr<SharedMemoryMappingArea>(new SharedMemoryMappingArea(reinterpret_cast<u8*>(alloc), size, size / __pagesize));
+#else
 	uint flags = MAP_ANONYMOUS | MAP_PRIVATE;
 #ifdef __APPLE__
 	if (jit)
@@ -167,12 +298,27 @@ std::unique_ptr<SharedMemoryMappingArea> SharedMemoryMappingArea::Create(size_t 
 		return nullptr;
 
 	return std::unique_ptr<SharedMemoryMappingArea>(new SharedMemoryMappingArea(static_cast<u8*>(alloc), size, size / __pagesize));
+#endif
 }
 
 u8* SharedMemoryMappingArea::Map(void* file_handle, size_t file_offset, void* map_base, size_t map_size, const PageProtectionMode& mode)
 {
 	pxAssert(static_cast<u8*>(map_base) >= m_base_ptr && static_cast<u8*>(map_base) < (m_base_ptr + m_size));
 
+#if TARGET_OS_SIMULATOR
+	const kern_return_t res =
+		mach_vm_map(mach_task_self(), reinterpret_cast<mach_vm_address_t*>(&map_base), map_size, 0, VM_FLAGS_OVERWRITE,
+			static_cast<mach_port_t>(reinterpret_cast<uintptr_t>(file_handle)), file_offset, false,
+			LinuxProt(mode), VM_PROT_READ | VM_PROT_WRITE, VM_INHERIT_NONE);
+	if (res != KERN_SUCCESS) [[unlikely]]
+	{
+		ERROR_LOG("mach_vm_map() failed in Map: {}", res);
+		return nullptr;
+	}
+
+	m_num_mappings++;
+	return static_cast<u8*>(map_base);
+#else
 	const uint lnxmode = LinuxProt(mode);
 	if (file_handle)
 	{
@@ -193,24 +339,43 @@ u8* SharedMemoryMappingArea::Map(void* file_handle, size_t file_offset, void* ma
 
 	m_num_mappings++;
 	return static_cast<u8*>(map_base);
+#endif
 }
 
 bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size, bool is_file)
 {
 	pxAssert(static_cast<u8*>(map_base) >= m_base_ptr && static_cast<u8*>(map_base) < (m_base_ptr + m_size));
 
+#if TARGET_OS_SIMULATOR
+	const kern_return_t res =
+		mach_vm_map(mach_task_self(), reinterpret_cast<mach_vm_address_t*>(&map_base), map_size, 0, VM_FLAGS_OVERWRITE,
+			MEMORY_OBJECT_NULL, 0, false, VM_PROT_NONE, VM_PROT_NONE, VM_INHERIT_NONE);
+	if (res != KERN_SUCCESS) [[unlikely]]
+	{
+		ERROR_LOG("mach_vm_map() failed: {}", res);
+		return false;
+	}
+
+	m_num_mappings--;
+	return true;
+#else
 	if (mmap(map_base, map_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED)
 		return false;
 
 	m_num_mappings--;
 	return true;
+#endif
 }
 
 #ifdef ARCH_ARM64
 
 void HostSys::FlushInstructionCache(void* address, u32 size)
 {
+#if TARGET_OS_IPHONE
+	sys_icache_invalidate(address, size);
+#else
 	__builtin___clear_cache(reinterpret_cast<char*>(address), reinterpret_cast<char*>(address) + size);
+#endif
 }
 
 #endif

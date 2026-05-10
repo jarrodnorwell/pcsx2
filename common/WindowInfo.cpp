@@ -146,7 +146,7 @@ std::optional<float> WindowInfo::QueryRefreshRateForWindow(const WindowInfo& wi)
 
 std::optional<float> WindowInfo::QueryRefreshRateForWindow(const WindowInfo& wi)
 {
-	if (wi.type == WindowInfo::Type::MacOS)
+	if (wi.type == WindowInfo::Type::MacOS || wi.type == WindowInfo::Type::iOS)
 		return CocoaTools::GetViewRefreshRate(wi);
 
 	return std::nullopt;

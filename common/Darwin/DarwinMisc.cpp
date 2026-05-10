@@ -25,8 +25,14 @@
 #include <mach/task.h>
 #include <mach/thread_state.h>
 #include <mutex>
+
+#if TARGET_OS_IPHONE
+#include <dlfcn.h>
+#include <unistd.h>
+#else
 #include <ApplicationServices/ApplicationServices.h>
 #include <IOKit/pwr_mgt/IOPMLib.h>
+#endif
 
 // Darwin (OSX) is a bit different from Linux when requesting properties of
 // the OS because of its BSD/Mach heritage. Helpfully, most of this code
@@ -136,10 +142,13 @@ std::string GetOSVersionString()
 	return type + " " + release + " " + arch;
 }
 
+#if !TARGET_OS_IPHONE
 static IOPMAssertionID s_pm_assertion;
+#endif
 
 bool Common::InhibitScreensaver(bool inhibit)
 {
+#if !TARGET_OS_IPHONE
 	if (s_pm_assertion)
 	{
 		IOPMAssertionRelease(s_pm_assertion);
@@ -148,7 +157,7 @@ bool Common::InhibitScreensaver(bool inhibit)
 
 	if (inhibit)
 		IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep, kIOPMAssertionLevelOn, CFSTR("Playing a game"), &s_pm_assertion);
-
+#endif
 	return true;
 }
 
@@ -158,12 +167,15 @@ void Common::SetMousePosition(int x, int y)
 	// Creating mouse move events and posting them wasn't very reliable.
 	// Calling CGWarpMouseCursorPosition without CGAssociateMouseAndMouseCursorPosition(false)
 	// ends up with the cursor feeling "sticky".
+#if !TARGET_OS_IPHONE
 	CGAssociateMouseAndMouseCursorPosition(false);
 	CGWarpMouseCursorPosition(CGPointMake(x, y));
 	CGAssociateMouseAndMouseCursorPosition(true); // The default state
+#endif
 	return;
 }
 
+#if !TARGET_OS_IPHONE
 CFMachPortRef mouseEventTap = nullptr;
 CFRunLoopSourceRef mouseRunLoopSource = nullptr;
 
@@ -177,9 +189,11 @@ CGEventRef mouseMoveCallback(CGEventTapProxy, CGEventType type, CGEventRef event
 	}
 	return event;
 }
+#endif
 
 bool Common::AttachMousePositionCb(std::function<void(int, int)> cb)
 {
+#if !TARGET_OS_IPHONE
 	if (!AXIsProcessTrusted())
 	{
 		Console.Warning("Process isn't trusted with accessibility permissions. Mouse tracking will not work!");
@@ -196,12 +210,13 @@ bool Common::AttachMousePositionCb(std::function<void(int, int)> cb)
 
 	mouseRunLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, mouseEventTap, 0);
 	CFRunLoopAddSource(CFRunLoopGetCurrent(), mouseRunLoopSource, kCFRunLoopCommonModes);
-
+#endif
 	return true;
 }
 
 void Common::DetachMousePositionCb()
 {
+#if !TARGET_OS_IPHONE
 	if (mouseRunLoopSource)
 	{
 		CFRunLoopRemoveSource(CFRunLoopGetCurrent(), mouseRunLoopSource, kCFRunLoopCommonModes);
@@ -213,6 +228,7 @@ void Common::DetachMousePositionCb()
 	}
 	mouseRunLoopSource = nullptr;
 	mouseEventTap = nullptr;
+#endif
 }
 
 void Threading::Sleep(int ms)
@@ -292,7 +308,7 @@ static CPUInfo CalcCPUInfo()
 	std::vector<DarwinMisc::CPUClass> classes = DarwinMisc::GetCPUClasses();
 	out.num_clusters = static_cast<u32>(classes.size());
 	out.num_big_cores = classes.empty() ? 0 : classes[0].num_physical;
-	out.num_threads   = classes.empty() ? 0 : classes[0].num_logical;
+	out.num_threads = classes.empty() ? 0 : classes[0].num_logical;
 	out.num_small_cores = 0;
 	for (std::size_t i = 1; i < classes.size(); i++)
 	{
@@ -324,15 +340,38 @@ static thread_local int s_code_write_depth = 0;
 
 void HostSys::BeginCodeWrite()
 {
+#if !TARGET_OS_IPHONE
 	if ((s_code_write_depth++) == 0)
 		pthread_jit_write_protect_np(0);
+#endif
+
+#if TARGET_OS_SIMULATOR
+	if ((s_code_write_depth++) == 0)
+	{
+		static auto func = reinterpret_cast<void (*)(int)>(dlsym(RTLD_DEFAULT, "pthread_jit_write_protect_np"));
+		if (func)
+			func(0);
+	}
+#endif
 }
 
 void HostSys::EndCodeWrite()
 {
+#if !TARGET_OS_IPHONE
 	pxAssert(s_code_write_depth > 0);
 	if ((--s_code_write_depth) == 0)
 		pthread_jit_write_protect_np(1);
+#endif
+
+#if TARGET_OS_SIMULATOR
+	pxAssert(s_code_write_depth > 0);
+	if ((--s_code_write_depth) == 0)
+	{
+		static auto func = reinterpret_cast<void (*)(int)>(dlsym(RTLD_DEFAULT, "pthread_jit_write_protect_np"));
+		if (func)
+			func(1);
+	}
+#endif
 }
 
 [[maybe_unused]] static bool IsStoreInstruction(const void* ptr)

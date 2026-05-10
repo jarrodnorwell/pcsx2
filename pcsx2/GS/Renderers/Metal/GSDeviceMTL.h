@@ -17,7 +17,12 @@
 #include "GS/GS.h"
 #include "GSMTLDeviceInfo.h"
 #include "GSMTLSharedHeader.h"
+#if !TARGET_OS_IPHONE
 #include <AppKit/AppKit.h>
+#else
+#include <UIKit/UIKit.h>
+using NSView = UIView;
+#endif
 #include <Metal/Metal.h>
 #include <QuartzCore/QuartzCore.h>
 #include <atomic>

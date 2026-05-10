@@ -9,7 +9,9 @@
 #include "StringUtil.h"
 
 #include <common/FastJmp.h>
+#if !TARGET_OS_IPHONE
 #include <jpeglib.h>
+#endif
 #include <png.h>
 #include <webp/decode.h>
 #include <webp/encode.h>
@@ -45,8 +47,10 @@ struct FormatHandler
 
 static constexpr FormatHandler s_format_handlers[] = {
 	{"png", PNGBufferLoader, PNGBufferSaver, PNGFileLoader, PNGFileSaver},
-	{"jpg", JPEGBufferLoader, JPEGBufferSaver, JPEGFileLoader, JPEGFileSaver},
-	{"jpeg", JPEGBufferLoader, JPEGBufferSaver, JPEGFileLoader, JPEGFileSaver},
+#if !TARGET_OS_IPHONE
+    {"jpg", JPEGBufferLoader, JPEGBufferSaver, JPEGFileLoader, JPEGFileSaver},
+    {"jpeg", JPEGBufferLoader, JPEGBufferSaver, JPEGFileLoader, JPEGFileSaver},
+#endif
 	{"webp", WebPBufferLoader, WebPBufferSaver, WebPFileLoader, WebPFileSaver},
 	{"bmp", BMPBufferLoader, BMPBufferSaver, BMPFileLoader, BMPFileSaver},
 };
@@ -382,6 +386,7 @@ bool PNGBufferSaver(const RGBA8Image& image, std::vector<u8>* buffer, u8 quality
 	return true;
 }
 
+#if !TARGET_OS_IPHONE
 namespace
 {
 	struct JPEGErrorHandler
@@ -405,10 +410,12 @@ namespace
 		}
 	};
 } // namespace
+#endif
 
 template <typename T>
 static bool WrapJPEGDecompress(RGBA8Image* image, T setup_func)
 {
+#if !TARGET_OS_IPHONE
 	std::vector<u8> scanline;
 	jpeg_decompress_struct info = {};
 
@@ -473,17 +480,25 @@ static bool WrapJPEGDecompress(RGBA8Image* image, T setup_func)
 	jpeg_finish_decompress(&info);
 	jpeg_destroy_decompress(&info);
 	return result;
+#else
+    return false;
+#endif
 }
 
 bool JPEGBufferLoader(RGBA8Image* image, const void* buffer, size_t buffer_size)
 {
+#if !TARGET_OS_IPHONE
 	return WrapJPEGDecompress(image, [buffer, buffer_size](jpeg_decompress_struct& info) {
 		jpeg_mem_src(&info, static_cast<const unsigned char*>(buffer), buffer_size);
 	});
+#else
+    return false;
+#endif
 }
 
 bool JPEGFileLoader(RGBA8Image* image, const char* filename, std::FILE* fp)
 {
+#if !TARGET_OS_IPHONE
 	static constexpr u32 BUFFER_SIZE = 16384;
 
 	struct FileCallback
@@ -542,11 +557,15 @@ bool JPEGFileLoader(RGBA8Image* image, const char* filename, std::FILE* fp)
 	};
 
 	return WrapJPEGDecompress(image, [&cb](jpeg_decompress_struct& info) { info.src = &cb.mgr; });
+#else
+    return false;
+#endif
 }
 
 template <typename T>
 static bool WrapJPEGCompress(const RGBA8Image& image, u8 quality, T setup_func)
 {
+#if !TARGET_OS_IPHONE
 	std::vector<u8> scanline;
 	jpeg_compress_struct info = {};
 
@@ -598,10 +617,14 @@ static bool WrapJPEGCompress(const RGBA8Image& image, u8 quality, T setup_func)
 	jpeg_finish_compress(&info);
 	jpeg_destroy_compress(&info);
 	return result;
+#else
+    return false;
+#endif
 }
 
 bool JPEGBufferSaver(const RGBA8Image& image, std::vector<u8>* buffer, u8 quality)
 {
+#if !TARGET_OS_IPHONE
 	// give enough space to avoid reallocs
 	buffer->resize(image.GetWidth() * image.GetHeight() * 2);
 
@@ -636,10 +659,14 @@ bool JPEGBufferSaver(const RGBA8Image& image, std::vector<u8>* buffer, u8 qualit
 	};
 
 	return WrapJPEGCompress(image, quality, [&cb](jpeg_compress_struct& info) { info.dest = &cb.mgr; });
+#else
+    return false;
+#endif
 }
 
 bool JPEGFileSaver(const RGBA8Image& image, const char* filename, std::FILE* fp, u8 quality)
 {
+#if !TARGET_OS_IPHONE
 	static constexpr u32 BUFFER_SIZE = 16384;
 
 	struct FileCallback
@@ -683,6 +710,9 @@ bool JPEGFileSaver(const RGBA8Image& image, const char* filename, std::FILE* fp,
 
 	return (WrapJPEGCompress(image, quality, [&cb](jpeg_compress_struct& info) { info.dest = &cb.mgr; }) &&
 			!cb.write_error);
+#else
+    return false;
+#endif
 }
 
 bool WebPBufferLoader(RGBA8Image* image, const void* buffer, size_t buffer_size)

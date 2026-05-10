@@ -144,19 +144,31 @@ if(WIN32)
 	)
 elseif(APPLE)
 	target_sources(common PRIVATE
-		CocoaTools.mm
-		CocoaTools.h
 		Darwin/DarwinThreads.cpp
 		Darwin/DarwinMisc.cpp
 		Darwin/DarwinMisc.h
 		Linux/LnxHostSys.cpp
 	)
+
+	if(NOT IOS)
+		target_sources(common PRIVATE
+			CocoaTools.mm
+			CocoaTools.h
+		)
+	endif()
+
 	target_compile_options(common PRIVATE -fobjc-arc)
 	target_link_options(common PRIVATE -fobjc-link-runtime)
-	target_link_libraries(common PRIVATE
-		"-framework Foundation"
-		"-framework IOKit"
-	)
+	if(IOS)
+		target_link_libraries(common PRIVATE
+			"-framework Foundation"
+		)
+	else()
+		target_link_libraries(common PRIVATE
+			"-framework Foundation"
+			"-framework IOKit"
+		)
+	endif()
 else()
 	target_sources(common PRIVATE
 		Linux/LnxHostSys.cpp
@@ -189,7 +201,7 @@ if (USE_GCC AND CMAKE_INTERPROCEDURAL_OPTIMIZATION)
 	set_source_files_properties(FastJmp.cpp PROPERTIES COMPILE_FLAGS -fno-lto)
 endif()
 
-if(NOT WIN32)
+if(NOT WIN32 AND NOT IOS)
 	# libcurl-based HTTPDownloader
 	target_sources(common PRIVATE
 		HTTPDownloaderCurl.cpp
@@ -202,11 +214,16 @@ endif()
 
 target_link_libraries(common PRIVATE
 	${LIBC_LIBRARIES}
-	JPEG::JPEG
 	PNG::PNG
 	WebP::libwebp
 	cpuinfo
 )
+
+if(NOT IOS)
+	target_link_libraries(common PRIVATE
+		JPEG::JPEG
+	)
+endif()
 
 target_link_libraries(common PUBLIC
 	fmt::fmt

@@ -36,7 +36,12 @@ detect_compiler()
 #-------------------------------------------------------------------------------
 # Include specific module
 include(BuildParameters)
-include(SearchForStuff)
+if(IOS)
+    set(ENABLE_QT_UI OFF)
+	include(iOSSearchForStuff)
+else()
+	include(SearchForStuff)
+endif()
 
 # Must be done after SearchForStuff
 get_git_version_info()
@@ -50,6 +55,10 @@ add_subdirectory(pcsx2)
 
 if(ENABLE_QT_UI)
 	add_subdirectory(pcsx2-qt)
+endif()
+
+if(IOS)
+	add_subdirectory(pcsx2-ios)
 endif()
 
 # Updater is Windows only for now.
